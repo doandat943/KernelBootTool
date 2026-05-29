@@ -37,7 +37,7 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
-          pyinstaller --onefile --windowed --name "${{ matrix.artifact }}" kernel_boot_tool.py
+          pyinstaller --onefile --windowed --name "${{ matrix.artifact }}" main.py
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
