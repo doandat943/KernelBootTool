@@ -1,6 +1,6 @@
-# Boot Image Tool
+# KernelBootTool
 
-A simple GUI tool for unpacking and repacking Android boot images.
+A simple GUI tool for unpacking and repacking Android boot images for KernelSU/SUSFS.
 
 ## Features
 
@@ -18,13 +18,13 @@ A simple GUI tool for unpacking and repacking Android boot images.
 ## Usage
 
 ```bash
-./dist/BootImageTool
+./dist/KernelBootTool
 ```
 
 Or run from source:
 
 ```bash
-python3 boot_image_tool.py
+python3 kernel_boot_tool.py
 ```
 
 ## Build from Source
@@ -34,7 +34,7 @@ sudo apt install python3.12-venv
 python3 -m venv venv
 source venv/bin/activate
 pip install pyqt6 pyinstaller
-pyinstaller --onefile --windowed --name "BootImageTool" boot_image_tool.py
+pyinstaller --onefile --windowed --name "KernelBootTool" kernel_boot_tool.py
 ```
 
-Executable will be in `dist/BootImageTool`.
+Executable will be in `dist/KernelBootTool`.
