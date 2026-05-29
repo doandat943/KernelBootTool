@@ -1,0 +1,47 @@
+name: Build Multi-Platform
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            artifact: BootImageTool
+          - os: windows-latest
+            platform: windows
+            artifact: BootImageTool.exe
+          - os: macos-latest
+            platform: macos
+            artifact: BootImageTool
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install PyInstaller PyQt6
+
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller --onefile --windowed --name "${{ matrix.artifact }}" boot_image_tool.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}-${{ matrix.platform }}
+          path: dist/${{ matrix.artifact }}*
+          retention-days: 30
