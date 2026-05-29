@@ -24,7 +24,7 @@ A simple GUI tool for unpacking and repacking Android boot images for KernelSU/S
 Or run from source:
 
 ```bash
-python3 kernel_boot_tool.py
+python3 main.py
 ```
 
 ## Build from Source
@@ -34,7 +34,7 @@ sudo apt install python3.12-venv
 python3 -m venv venv
 source venv/bin/activate
 pip install pyqt6 pyinstaller
-pyinstaller --onefile --windowed --name "KernelBootTool" kernel_boot_tool.py
+pyinstaller --onefile --windowed --name "KernelBootTool" main.py
 ```
 
 Executable will be in `dist/KernelBootTool`.

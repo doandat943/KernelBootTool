@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QDateTime
 
 
-class BootImageTool(QWidget):
+class KernelBootTool(QWidget):
     def __init__(self):
         super().__init__()
         self.boot_path = None
@@ -22,12 +22,12 @@ class BootImageTool(QWidget):
         self.check_mkbootimg()
 
     def setup_ui(self):
-        self.setWindowTitle("Boot Image Tool")
+        self.setWindowTitle("KernelBootTool")
         self.setMinimumSize(800, 600)
 
         layout = QVBoxLayout()
 
-        title = QLabel("Boot Image Tool")
+        title = QLabel("KernelBootTool")
         title.setStyleSheet("font-size: 24px; font-weight: bold;")
         layout.addWidget(title)
 
@@ -174,6 +174,6 @@ class BootImageTool(QWidget):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    window = BootImageTool()
+    window = KernelBootTool()
     window.show()
     sys.exit(app.exec())
