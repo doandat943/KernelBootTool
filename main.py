@@ -4,14 +4,53 @@ import os
 import shutil
 import tempfile
 import zipfile
+import platform
+import urllib.request
 from pathlib import Path
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QLineEdit, QPushButton, QTextEdit, QLabel, QFileDialog,
-    QTabWidget, QComboBox
+    QTabWidget
 )
-from PyQt6.QtCore import Qt, QDateTime
+from PyQt6.QtCore import QDateTime
 
+MAGISKBOOT_RELEASE = "https://github.com/PinNaCode/magiskboot_build/releases/download/last-ci/"
+
+def magiskboot_asset():
+    plat = sys.platform
+    m = platform.machine().lower()
+    if plat == "win32":
+        if m in ("x86_64", "amd64"):
+            return "magiskboot-e159716-release-windows-mingw-w64-ucrt-x86_64-standalone.zip"
+        if m in ("arm64", "aarch64"):
+            return "magiskboot-e159716-release-windows-mingw-w64-ucrt-arm64-standalone.zip"
+        return "magiskboot-e159716-release-windows-mingw-w64-msvcrt-i686-standalone.zip"
+    if plat == "darwin":
+        if m in ("arm64", "aarch64"):
+            return "magiskboot-e159716-release-macos-14-arm64-standalone.zip"
+        return "magiskboot-e159716-release-macos-14-x86_64-standalone.zip"
+    return None
+
+def find_avb_offset(boot_path):
+    size = os.path.getsize(boot_path)
+    with open(boot_path, 'rb') as f:
+        f.seek(-64, 2)
+        if f.read(4) == b'AVBf':
+            return size - 64
+        f.seek(max(0, size - 4096))
+        data = f.read()
+        idx = data.rfind(b'AVBf')
+        if idx >= 0:
+            return max(0, size - 4096) + idx
+    return size
+
+def extract_section(boot_path, out_path, offset, size):
+    with open(boot_path, 'rb') as f, open(out_path, 'wb') as o:
+        f.seek(offset)
+        o.write(f.read(size))
+
+def read_le32(data, off):
+    return int.from_bytes(data[off:off+4], 'little')
 
 class KernelBootTool(QWidget):
     def __init__(self):
@@ -19,10 +58,11 @@ class KernelBootTool(QWidget):
         self.boot_path = None
         self.work_dir = None
         self.out_path = None
-        self.mkbootimg = None
+        self.magiskboot = None
         self.anykernel_path = None
+        self.orig_boot = None
         self.setup_ui()
-        self.check_mkbootimg()
+        self.check_magiskboot()
 
     def setup_ui(self):
         self.setWindowTitle("KernelBootTool")
@@ -130,17 +170,92 @@ class KernelBootTool(QWidget):
         widget.setLayout(layout)
         return widget
 
-    def check_mkbootimg(self):
-        p = Path(tempfile.gettempdir()) / "mkbootimg"
-        if not p.exists():
-            self.log("Downloading mkbootimg...")
-            subprocess.run([
-                "git", "clone", "--depth", "1",
-                "https://android.googlesource.com/platform/system/tools/mkbootimg",
-                str(p)
-            ], capture_output=True)
-        self.mkbootimg = p
-        self.log("Ready")
+    def check_magiskboot(self):
+        ext = ".exe" if sys.platform == "win32" else ""
+        p = Path(tempfile.gettempdir()) / f"magiskboot{ext}"
+        if p.exists():
+            self.magiskboot = p
+            self.log("magiskboot ready")
+            return
+
+        asset = magiskboot_asset()
+        if not asset:
+            self.log(f"Platform {sys.platform}/{platform.machine()} not auto-supported. Install magiskboot manually in PATH.")
+            return
+
+        self.log(f"Downloading magiskboot ({asset})...")
+        zip_path = p.with_suffix(".zip")
+        try:
+            urllib.request.urlretrieve(MAGISKBOOT_RELEASE + asset, zip_path)
+        except Exception as ex:
+            self.log(f"Download failed: {ex}")
+            return
+
+        try:
+            with zipfile.ZipFile(zip_path, 'r') as z:
+                z.extractall(p.parent)
+        finally:
+            zip_path.unlink(missing_ok=True)
+        if sys.platform != "win32":
+            p.chmod(0o755)
+        self.magiskboot = p
+        self.log("magiskboot ready")
+
+    def _save_orig_and_preserved(self, work_dir):
+        """Copy original boot to work_dir and extract BÖTT/AVB if present."""
+        self.orig_boot = work_dir / "orig.img"
+        shutil.copy(self.boot_path, self.orig_boot)
+        avb_off = find_avb_offset(self.orig_boot)
+        with open(self.orig_boot, 'rb') as f:
+            f.seek(0)
+            hdr = f.read(1664)
+        if len(hdr) < 44:
+            return
+        kernel_size = read_le32(hdr, 8)
+        header_version = read_le32(hdr, 40)
+        ramdisk_size = 0
+        signature_size = 0
+        if header_version >= 3:
+            ramdisk_size = read_le32(hdr, 12)
+            if header_version >= 4:
+                signature_size = read_le32(hdr, 1580)
+        page_size = 4096
+        kp = (kernel_size + page_size - 1) // page_size
+        rp = (ramdisk_size + page_size - 1) // page_size
+        sp = (signature_size + page_size - 1) // page_size
+        bott_start = page_size * (1 + kp + rp + sp)
+        bott_size = avb_off - bott_start
+        if bott_size > 0:
+            extract_section(self.orig_boot, work_dir / "bott", bott_start, bott_size)
+            self.log(f"Saved BÖTT ({bott_size} bytes)")
+        if avb_off < os.path.getsize(self.orig_boot):
+            avb_size = os.path.getsize(self.orig_boot) - avb_off
+            extract_section(self.orig_boot, work_dir / "avb_footer", avb_off, avb_size)
+            self.log(f"Saved AVB footer ({avb_size} bytes)")
+
+    def _restore_preserved(self, new_img, work_dir):
+        """Append BÖTT and AVB footer to repacked image if magiskboot didn't preserve them."""
+        orig_size = os.path.getsize(self.orig_boot)
+        cur_size = os.path.getsize(new_img)
+        if cur_size >= orig_size - 4096:
+            self.log("magiskboot preserved full image")
+            return
+        missing = orig_size - cur_size
+        bott = work_dir / "bott"
+        avb = work_dir / "avb_footer"
+        bott_size = bott.stat().st_size if bott.exists() else 0
+        avb_size = avb.stat().st_size if avb.exists() else 0
+        if bott_size + avb_size >= missing - 4096:
+            if bott.exists() and bott_size > 0:
+                with open(new_img, 'ab') as f:
+                    f.write(bott.read_bytes())
+                self.log(f"BÖTT re-attached ({bott_size} bytes)")
+            if avb.exists() and avb_size > 0:
+                with open(new_img, 'ab') as f:
+                    f.write(avb.read_bytes())
+                self.log(f"AVB footer re-attached ({avb_size} bytes)")
+        else:
+            self.log(f"Warning: missing {missing} bytes, preserved {bott_size + avb_size}")
 
     def log(self, msg):
         self.log_area.append(msg)
@@ -179,15 +294,16 @@ class KernelBootTool(QWidget):
         if not self.boot_path or not self.anykernel_path:
             return
         try:
-            self.log("Starting flash process...")
+            self.log("Starting patch process...")
             self.work_dir = Path(tempfile.mkdtemp()) / "work"
             os.makedirs(self.work_dir, exist_ok=True)
 
-            self.log("Unpacking boot.img...")
-            subprocess.run([
-                "python3", str(self.mkbootimg / "unpack_bootimg.py"),
-                "--boot_img", self.boot_path, "--out", str(self.work_dir)
-            ], check=True, capture_output=True)
+            self.log("Unpacking boot.img with magiskboot...")
+            self._save_orig_and_preserved(self.work_dir)
+            subprocess.run(
+                [str(self.magiskboot), "unpack", str(self.orig_boot)],
+                cwd=str(self.work_dir), check=True, capture_output=True
+            )
             self.log("Unpacked boot.img")
 
             self.log("Extracting kernel from AnyKernel3...")
@@ -203,16 +319,11 @@ class KernelBootTool(QWidget):
 
             self.log("Repacking boot.img...")
             out = self.work_dir / "new-boot.img"
-            cmd = [
-                "python3", str(self.mkbootimg / "mkbootimg.py"),
-                "--kernel", str(self.work_dir / "kernel"),
-                "--output", str(out)
-            ]
-            for name in ["kernel_cmdline", "kernel_base"]:
-                f = self.work_dir / name
-                if f.exists():
-                    cmd.extend([f"--{name.replace('_', '-')}", f.read_text().strip()])
-            subprocess.run(cmd, check=True, capture_output=True)
+            subprocess.run(
+                [str(self.magiskboot), "repack", str(self.orig_boot), str(out)],
+                cwd=str(self.work_dir), check=True, capture_output=True
+            )
+            self._restore_preserved(out, self.work_dir)
             self.log("Repacked")
 
             timestamp = QDateTime.currentDateTime().toString("yyyyMMdd_HHmmss")
@@ -240,11 +351,12 @@ class KernelBootTool(QWidget):
         self.work_dir = Path(tempfile.mkdtemp()) / "work"
         os.makedirs(self.work_dir, exist_ok=True)
         try:
-            subprocess.run([
-                "python3", str(self.mkbootimg / "unpack_bootimg.py"),
-                "--boot_img", self.boot_path, "--out", str(self.work_dir)
-            ], check=True, capture_output=True)
-            items = sorted(os.listdir(self.work_dir))
+            self._save_orig_and_preserved(self.work_dir)
+            subprocess.run(
+                [str(self.magiskboot), "unpack", str(self.orig_boot)],
+                cwd=str(self.work_dir), check=True, capture_output=True
+            )
+            items = sorted(p.name for p in self.work_dir.iterdir())
             self.log(f"Unpacked: {', '.join(items)}")
             self.repack_btn.setEnabled(True)
         except Exception as ex:
@@ -258,16 +370,11 @@ class KernelBootTool(QWidget):
         self.log("Repacking...")
         out = self.work_dir / "new-boot.img"
         try:
-            cmd = [
-                "python3", str(self.mkbootimg / "mkbootimg.py"),
-                "--kernel", str(self.work_dir / "kernel"),
-                "--output", str(out)
-            ]
-            for name in ["kernel_cmdline", "kernel_base"]:
-                f = self.work_dir / name
-                if f.exists():
-                    cmd.extend([f"--{name.replace('_', '-')}", f.read_text().strip()])
-            subprocess.run(cmd, check=True, capture_output=True)
+            subprocess.run(
+                [str(self.magiskboot), "repack", str(self.orig_boot), str(out)],
+                cwd=str(self.work_dir), check=True, capture_output=True
+            )
+            self._restore_preserved(out, self.work_dir)
             self.out_path = out
             self.log(f"Repacked: {out.name}")
             self.save_btn.setEnabled(True)
@@ -309,7 +416,6 @@ class KernelBootTool(QWidget):
         self.flash_btn.setEnabled(False)
         self.log_area.clear()
         self.log("Cleaned")
-
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
