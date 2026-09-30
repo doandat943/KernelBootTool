@@ -90,12 +90,12 @@ class KernelBootTool(QWidget):
         widget = QWidget()
         layout = QVBoxLayout()
 
-        layout.addWidget(QLabel("Select boot.img and AnyKernel3 zip"))
+        layout.addWidget(QLabel("Select boot.img and AnyKernel3.zip"))
 
         boot_layout = QHBoxLayout()
         self.normal_boot_input = QLineEdit()
         self.normal_boot_input.setPlaceholderText("boot.img")
-        boot_browse = QPushButton("Open")
+        boot_browse = QPushButton("Browse...")
         boot_browse.clicked.connect(self.browse_normal_boot)
         boot_layout.addWidget(self.normal_boot_input)
         boot_layout.addWidget(boot_browse)
@@ -104,7 +104,7 @@ class KernelBootTool(QWidget):
         ak_layout = QHBoxLayout()
         self.normal_ak_input = QLineEdit()
         self.normal_ak_input.setPlaceholderText("AnyKernel3.zip")
-        ak_browse = QPushButton("Open")
+        ak_browse = QPushButton("Browse...")
         ak_browse.clicked.connect(self.browse_normal_ak)
         ak_layout.addWidget(self.normal_ak_input)
         ak_layout.addWidget(ak_browse)
@@ -130,10 +130,12 @@ class KernelBootTool(QWidget):
         widget = QWidget()
         layout = QVBoxLayout()
 
+        layout.addWidget(QLabel("Select boot.img and kernel image"))
+
         boot_layout = QHBoxLayout()
         self.adv_boot_input = QLineEdit()
         self.adv_boot_input.setPlaceholderText("boot.img")
-        boot_browse = QPushButton("Open")
+        boot_browse = QPushButton("Browse...")
         boot_browse.clicked.connect(self.browse_adv_boot)
         boot_layout.addWidget(self.adv_boot_input)
         boot_layout.addWidget(boot_browse)
@@ -141,8 +143,8 @@ class KernelBootTool(QWidget):
 
         kernel_layout = QHBoxLayout()
         self.adv_kernel_input = QLineEdit()
-        self.adv_kernel_input.setPlaceholderText("kernel (optional)")
-        kernel_browse = QPushButton("Open")
+        self.adv_kernel_input.setPlaceholderText("kernel image (optional)")
+        kernel_browse = QPushButton("Browse...")
         kernel_browse.clicked.connect(self.browse_adv_kernel)
         kernel_layout.addWidget(self.adv_kernel_input)
         kernel_layout.addWidget(kernel_browse)
@@ -258,7 +260,8 @@ class KernelBootTool(QWidget):
             self.log(f"Warning: missing {missing} bytes, preserved {bott_size + avb_size}")
 
     def log(self, msg):
-        self.log_area.append(msg)
+        time_str = QDateTime.currentDateTime().toString("HH:mm:ss")
+        self.log_area.append(f"[{time_str}] {msg}")
 
     def browse_normal_boot(self):
         path, _ = QFileDialog.getOpenFileName(self, "Select boot.img", "", "Images (*.img *.bin)")
@@ -294,6 +297,7 @@ class KernelBootTool(QWidget):
         if not self.boot_path or not self.anykernel_path:
             return
         try:
+            self.log_area.append("-" * 40)
             self.log("Starting patch process...")
             self.work_dir = Path(tempfile.mkdtemp()) / "work"
             os.makedirs(self.work_dir, exist_ok=True)
@@ -347,6 +351,7 @@ class KernelBootTool(QWidget):
     def unpack(self):
         if not self.boot_path:
             return
+        self.log_area.append("-" * 40)
         self.log("Unpacking...")
         self.work_dir = Path(tempfile.mkdtemp()) / "work"
         os.makedirs(self.work_dir, exist_ok=True)
@@ -363,6 +368,7 @@ class KernelBootTool(QWidget):
             self.log(f"Error: {ex}")
 
     def repack(self):
+        self.log_area.append("-" * 40)
         kernel = self.adv_kernel_input.text().strip()
         if kernel and os.path.exists(kernel):
             shutil.copy(kernel, self.work_dir / "kernel")
